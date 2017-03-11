@@ -53,12 +53,12 @@ public class TableUpdater {
 	 * Specific pointer to the client_secrets file we use for authorization.
 	 * This file is obtained from google apps
 	 */
-	private static final String CLIENT_SECRETS_LOCATION = "C:\\Google Drive\\Code\\urinal\\client_secrets.json";
+	private static final String CLIENT_SECRETS_LOCATION = "C:\\users\\mkorby\\Google Drive\\Code\\urinal\\client_secrets.json";
 
 	/**
 	 * Properties file
 	 */
-	private static final String TABLE_UPDATER_PROPERTIES = "C:\\Google Drive\\Code\\urinal\\urinal.properties";
+	private static final String TABLE_UPDATER_PROPERTIES = "C:\\users\\mkorby\\Google Drive\\Code\\urinal\\urinal.properties";
 
 	private static final SimpleDateFormat GOOGLE_DATE_FORMAT = new SimpleDateFormat("MM/dd/yy hh:mm a");
 	private static final Pattern URINAL_PATTERN = Pattern.compile("\\s*<urinal name=\"(.*)\" url=\"(.*)\"/>");
@@ -440,7 +440,7 @@ public class TableUpdater {
 		generateMailMessage = new MimeMessage(getMailSession);
 		generateMailMessage.addRecipient(Message.RecipientType.TO, new InternetAddress(MY_EMAIL_ADDRESS));
 		generateMailMessage.setSubject("UDN Map Updater Failed");
-		final String emailBody = "An error occured while running the UDN Map Updater on " + new Date() + ":<br>"
+		final String emailBody = "An error occured while running the UDN Fusion Table Updater on " + new Date() + ":<br>"
 				+ message;
 		generateMailMessage.setContent(emailBody, "text/html");
 		final Transport transport = getMailSession.getTransport("smtp");
@@ -451,8 +451,7 @@ public class TableUpdater {
 	}
 
 	/**
-	 * This method pulls back the password that we need to log in to the
-	 * Followme site from a properites file in which it is stored encrypted
+	 * This method pulls back the password that we need to log in to gmail to send mail
 	 * 
 	 * In order to re-encrypt the password, you'll need the Jasypt command line
 	 * tools More info here: http://www.jasypt.org/cli.html
