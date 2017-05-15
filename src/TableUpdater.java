@@ -1,8 +1,8 @@
 import java.awt.image.BufferedImage;
-import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.LineNumberReader;
 import java.io.StringReader;
 import java.net.MalformedURLException;
@@ -26,20 +26,23 @@ import javax.mail.Transport;
 import javax.mail.internet.AddressException;
 import javax.mail.internet.InternetAddress;
 import javax.mail.internet.MimeMessage;
+import javax.swing.text.StyledEditorKit.ForegroundAction;
 
 import org.jasypt.encryption.pbe.StandardPBEStringEncryptor;
 import org.jasypt.properties.EncryptableProperties;
 
 import com.google.api.client.auth.oauth2.Credential;
 import com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp;
-import com.google.api.client.extensions.java6.auth.oauth2.FileCredentialStore;
 import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver;
+import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver.Builder;
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
 import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
+import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.http.HttpTransport;
-import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.JsonFactory;
 import com.google.api.client.json.jackson2.JacksonFactory;
+import com.google.api.client.util.store.DataStoreFactory;
+import com.google.api.client.util.store.FileDataStoreFactory;
 import com.google.api.services.fusiontables.Fusiontables;
 import com.google.api.services.fusiontables.FusiontablesScopes;
 import com.google.api.services.fusiontables.model.Sqlresponse;
@@ -49,9 +52,10 @@ import com.googlecode.htmlcompressor.compressor.HtmlCompressor;
 
 public class TableUpdater {
 
+
 	/**
 	 * Specific pointer to the client_secrets file we use for authorization.
-	 * This file is obtained from google apps
+	 * This file is obtained from google apps. Log in to google apps for joe@urinal.net, click into the UDN application under OAuth and there'll be a button to download client_secretes.json
 	 */
 	private static final String CLIENT_SECRETS_LOCATION = "C:\\users\\mkorby\\Google Drive\\Code\\urinal\\client_secrets.json";
 
@@ -60,10 +64,12 @@ public class TableUpdater {
 	 */
 	private static final String TABLE_UPDATER_PROPERTIES = "C:\\users\\mkorby\\Google Drive\\Code\\urinal\\urinal.properties";
 
+	//The local server receiver URL (host and port below) have to match exactly the one that's configured as part of this account on the Google API site. The account is referenced in client_secrets.json
+	private static final int LOCAL_SERVER_RECEIVER_PORT = 8080;
+	private static final String LOCAL_SERVER_RECEIVER_HOST = "localhost";
 	private static final SimpleDateFormat GOOGLE_DATE_FORMAT = new SimpleDateFormat("MM/dd/yy hh:mm a");
 	private static final Pattern URINAL_PATTERN = Pattern.compile("\\s*<urinal name=\"(.*)\" url=\"(.*)\"/>");
-	private static final Pattern MARKER_PATTERN = Pattern
-			.compile("\\s*<marker lat=\"(.*)\" lng=\"(.*)\" location=\"(.*)\">");
+	private static final Pattern MARKER_PATTERN = Pattern.compile("\\s*<marker lat=\"(.*)\" lng=\"(.*)\" location=\"(.*)\">");
 	private static final Pattern LINK_PATTERN = Pattern.compile("<a.*>(.*)</a>");
 	private static final Pattern URL_PATTERN = Pattern.compile(".*href\\s*=\\s*\"(.*)\" target.*");
 	private static final String UDN_US_LOCATIONS_XML_URL = "http://urinal.net/usLocations.xml";
@@ -75,6 +81,25 @@ public class TableUpdater {
 	private static final int MAX_URINALS_PER_BUBBLE_DUE_TO_QUERY_SIZE_CONSTRAINT = 14;
 	private static final int MAX_IMAGES_PER_BUBBLE_DUE_TO_QUERY_SIZE_CONSTRAINT = 5;
 	private static final String TOO_LARGE_TO_PROCESS = "is too large to process";
+
+	/**
+	 * Global instance of the {@link DataStoreFactory}. The best practice is to make it a single
+	 * globally shared instance across your application.
+	 */
+	private static FileDataStoreFactory dataStoreFactory;
+
+	/** Global instance of the HTTP transport. */
+	private static HttpTransport httpTransport;
+
+	/** Directory to store user credentials. */
+	private static final java.io.File DATA_STORE_DIR = new java.io.File(System.getProperty("user.home"), ".store/UDN_table_updater");
+
+	/**
+	 * Be sure to specify the name of your application. If the application name is {@code null} or
+	 * blank, the application will log a warning. Suggested format is "MyCompany-ProductName/1.0".
+	 */
+	private static final String APPLICATION_NAME = "UrinalDotNet/1.1";
+
 
 	private static final String USERNAME = "mkorby";
 	private static final String MY_EMAIL_ADDRESS = "mkorby@gmail.com";
@@ -90,12 +115,6 @@ public class TableUpdater {
 	}
 
 	private final Map<String, String> _cityCoordinateMap = new HashMap<String, String>();
-
-	/**
-	 * Global instance of the HTTP transport.
-	 */
-	private static final HttpTransport HTTP_TRANSPORT = new NetHttpTransport();
-
 	/**
 	 * Global instance of the JSON factory.
 	 */
@@ -107,32 +126,34 @@ public class TableUpdater {
 	 */
 	private static Credential authorize() throws Exception {
 		// load client secrets
-		final FileInputStream clientSecretStream = new FileInputStream(CLIENT_SECRETS_LOCATION);
-		final GoogleClientSecrets clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, clientSecretStream);
-		if (clientSecrets.getDetails().getClientId().startsWith("Enter")
-				|| clientSecrets.getDetails().getClientSecret().startsWith("Enter ")) {
-			throw new RuntimeException(
-					"Enter Client ID and Secret from https://code.google.com/apis/console/?api=fusiontables "
-							+ "into fusiontables-cmdline-sample/src/main/resources/client_secrets.json");
+		final GoogleClientSecrets clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(new FileInputStream(CLIENT_SECRETS_LOCATION)));
+		if (clientSecrets.getDetails().getClientId().startsWith("Enter") || clientSecrets.getDetails().getClientSecret().startsWith("Enter ")) {
+			throw new RuntimeException("Enter Client ID and Secret from https://code.google.com/apis/console/?api=fusiontables "
+					+ "into fusiontables-cmdline-sample/src/main/resources/client_secrets.json");
 		}
-		// set up file credential store
-		final FileCredentialStore credentialStore = new FileCredentialStore(
-				new File(System.getProperty("user.home"), ".credentials/fusiontables.json"), JSON_FACTORY);
 		// set up authorization code flow
-		final GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(HTTP_TRANSPORT, JSON_FACTORY,
-				clientSecrets, Collections.singleton(FusiontablesScopes.FUSIONTABLES))
-						.setCredentialStore(credentialStore).build();
+		GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
+				httpTransport, JSON_FACTORY, clientSecrets,
+				Collections.singleton(FusiontablesScopes.FUSIONTABLES)).setDataStoreFactory(
+						dataStoreFactory).build();
+
 		// authorize
-		return new AuthorizationCodeInstalledApp(flow, new LocalServerReceiver()).authorize("user");
+		Builder builder = new LocalServerReceiver.Builder();
+		builder.setHost(LOCAL_SERVER_RECEIVER_HOST);
+		builder.setPort(LOCAL_SERVER_RECEIVER_PORT);
+		LocalServerReceiver localServerReceiver = builder.build();
+		return new AuthorizationCodeInstalledApp(flow, localServerReceiver).authorize("user");
 	}
 
+
 	public TableUpdater() throws Exception {
+		httpTransport = GoogleNetHttpTransport.newTrustedTransport();
+		dataStoreFactory = new FileDataStoreFactory(DATA_STORE_DIR);
 
 		// authorization
 		final Credential credential = authorize();
 		// set up global FusionTables instance
-		fusiontables = new Fusiontables.Builder(HTTP_TRANSPORT, JSON_FACTORY, credential)
-				.setApplicationName("Google-FusionTablesSample/1.0").build();
+		fusiontables = new Fusiontables.Builder(httpTransport, JSON_FACTORY, credential).setApplicationName(APPLICATION_NAME).build();
 
 		final String locationTableId = getTableIdByName(LOCATION_TABLE_NAME);
 
@@ -145,7 +166,7 @@ public class TableUpdater {
 		Collections.sort(cities);
 
 		final ArrayList<String> allQueries = new ArrayList<String>();
-		
+
 		System.out.println("Building queries for " + cities.size() + " cities");
 		int i = 0;
 
@@ -154,15 +175,15 @@ public class TableUpdater {
 			if (++i % 10 == 0) {
 				System.out.println("City #" + i + ": " + city);
 			}
-			
-			
+
+
 			final ArrayList<String> locations = allLocations.get(city);
 			Collections.sort(locations, new LinkComparator());
 			final StringBuilder updateQuery = new StringBuilder();
 			final StringBuilder htmlBuilder = new StringBuilder();
 			final int numberOfUrinals = locations.size();
 			updateQuery.append("insert into ").append(locationTableId)
-					.append(" (Urinals, Number, City, Location, UpdateTime, Marker) values ('");
+			.append(" (Urinals, Number, City, Location, UpdateTime, Marker) values ('");
 			int locationCount = 0;
 
 			// Currently, the Google API only allows a query of 1500 characters
@@ -176,15 +197,15 @@ public class TableUpdater {
 					htmlBuilder.append("and ").append((numberOfUrinals - locationCount) + 1).append(" more...");
 					break;
 				}
-				
+
 				// No room to show images if we have more than 5 urinals here.
 				// Max length of query is currently 1500 chars
 				final String image = locations.size() <= MAX_IMAGES_PER_BUBBLE_DUE_TO_QUERY_SIZE_CONSTRAINT
 						? getFirstImage(location) : null;
-				if (image != null) {
-					location = location.replace(BLANK_SUFFIX, BLANK_SUFFIX + image + "<br>");
-				}
-				htmlBuilder.append(location).append("<p>");
+						if (image != null) {
+							location = location.replace(BLANK_SUFFIX, BLANK_SUFFIX + image + "<br>");
+						}
+						htmlBuilder.append(location).append("<p>");
 			}
 			final String compressedHtml = HTML_COMPRESSOR.compress(htmlBuilder.toString() + "'");
 
@@ -433,9 +454,9 @@ public class TableUpdater {
 		mailServerProperties = System.getProperties();
 		mailServerProperties.put("mail.smtp.port", "587"); // TLS Port
 		mailServerProperties.put("mail.smtp.auth", "true"); // Enable
-															// Authentication
+		// Authentication
 		mailServerProperties.put("mail.smtp.starttls.enable", "true"); // Enable
-																		// StartTLS
+		// StartTLS
 		getMailSession = Session.getDefaultInstance(mailServerProperties, null);
 		generateMailMessage = new MimeMessage(getMailSession);
 		generateMailMessage.addRecipient(Message.RecipientType.TO, new InternetAddress(MY_EMAIL_ADDRESS));
