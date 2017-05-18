@@ -38,6 +38,7 @@ import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver.Bu
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
 import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
+import com.google.api.client.googleapis.json.GoogleJsonResponseException;
 import com.google.api.client.http.HttpTransport;
 import com.google.api.client.json.JsonFactory;
 import com.google.api.client.json.jackson2.JacksonFactory;
@@ -135,8 +136,8 @@ public class TableUpdater {
 		GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
 				httpTransport, JSON_FACTORY, clientSecrets,
 				Collections.singleton(FusiontablesScopes.FUSIONTABLES)).setDataStoreFactory(
-						dataStoreFactory).build();
-
+						dataStoreFactory).setAccessType("offline").setApprovalPrompt("auto").build();
+		
 		// authorize
 		Builder builder = new LocalServerReceiver.Builder();
 		builder.setHost(LOCAL_SERVER_RECEIVER_HOST);
@@ -150,10 +151,7 @@ public class TableUpdater {
 		httpTransport = GoogleNetHttpTransport.newTrustedTransport();
 		dataStoreFactory = new FileDataStoreFactory(DATA_STORE_DIR);
 
-		// authorization
-		final Credential credential = authorize();
-		// set up global FusionTables instance
-		fusiontables = new Fusiontables.Builder(httpTransport, JSON_FACTORY, credential).setApplicationName(APPLICATION_NAME).build();
+		performAuthorization();
 
 		final String locationTableId = getTableIdByName(LOCATION_TABLE_NAME);
 
@@ -239,6 +237,14 @@ public class TableUpdater {
 			runUpdateMultipleAttempts(query);
 		}
 	}
+
+	private void performAuthorization() throws Exception {
+		// authorization
+		final Credential credential = authorize();
+		// set up global FusionTables instance
+		fusiontables = new Fusiontables.Builder(httpTransport, JSON_FACTORY, credential).setApplicationName(APPLICATION_NAME).build();
+	}
+
 
 	/**
 	 * List tables for the authenticated user.
@@ -340,14 +346,24 @@ public class TableUpdater {
 		return null;
 	}
 
-	private String run(final String query) throws IOException {
+	private String run(final String query) throws Exception {
 
 		final Fusiontables.Query.Sql sql = fusiontables.query().sql(query);
 
 		try {
 			final Sqlresponse response = sql.execute();
 			return response.toString();
-		} catch (final IllegalArgumentException e) {
+		} catch(final GoogleJsonResponseException jre) {
+			if (jre.getMessage().contains("401 Unauthorized")) {
+				//It looks like the connection may become unauthorized after a bunch of requests
+				System.err.println("\n\nCaught a \"401 Unathorized\" exception from Google. Attempting to re-authorize and try again.\n\n");
+				performAuthorization();
+				
+				//Throw the exception through, the caller will catch it and retry up to 5 times
+				throw jre;
+			}
+			System.err.println("");
+		//} catch (final IllegalArgumentException e) {
 			// For google-api-services-fusiontables-v1-rev1-1.7.2-beta this
 			// exception will always
 			// been thrown.
@@ -476,6 +492,9 @@ public class TableUpdater {
 	 * 
 	 * In order to re-encrypt the password, you'll need the Jasypt command line
 	 * tools More info here: http://www.jasypt.org/cli.html
+	 * 
+	 * NOTE: What is encoded in this file is a Google App Password for mail, not the password for the account
+	 * App Password allows log in without 2FA.
 	 * 
 	 * @return
 	 * @throws FileNotFoundException
@@ -662,7 +681,7 @@ public class TableUpdater {
 			return MIMEtype;
 		}
 	}
-
+	
 	public static void main(final String... args) {
 		String mailPassword = null;
 
